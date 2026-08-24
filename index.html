@@ -52,6 +52,16 @@ input:focus{border-color:#D85A30;background:#fff}
 .corner.br{bottom:10px;right:10px;border-width:0 3px 3px 0;border-radius:0 0 4px 0}
 #fileInput{display:none}
 .qr-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.cam-controls{display:none;align-items:center;gap:10px;margin-top:10px}
+.cam-controls.show{display:flex}
+.zoom-wrap{display:none;flex:1;align-items:center;gap:8px;background:#f0f0f0;border-radius:10px;padding:8px 12px}
+.zoom-wrap.show{display:flex}
+.zoom-wrap span{font-size:15px}
+.zoom-wrap input[type=range]{flex:1;accent-color:#D85A30}
+.torch-btn{padding:8px 14px;border-radius:10px;border:0.5px solid rgba(0,0,0,0.15);background:#f0f0f0;color:#1a1a1a;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;white-space:nowrap}
+.torch-btn.active{background:#D85A30;color:#fff;border-color:#D85A30}
+.scan-tip{display:none;font-size:12px;color:#999;margin-top:8px;line-height:1.4}
+.scan-tip.show{display:block}
 .result-card{background:#EAF3DE;border:0.5px solid rgba(59,109,17,0.25);border-radius:12px;padding:12px 14px;margin-top:12px;display:none}
 .result-card.error{background:#FCEBEB;border-color:rgba(163,45,45,0.25)}
 .result-card .rc-title{font-size:12px;color:#3B6D11;margin-bottom:8px;font-weight:600}
@@ -134,10 +144,19 @@ input:focus{border-color:#D85A30;background:#fff}
       </div>
     </div>
     <input type="file" id="fileInput" accept="image/*" onchange="scanFromFile(this)">
+    <div id="fileReader" style="display:none"></div>
     <div class="qr-btns">
       <button class="btn btn-primary" id="camBtn" onclick="toggleCamera()">📷 開啟相機掃描</button>
       <button class="btn btn-secondary" onclick="document.getElementById('fileInput').click()">🖼 從相簿選取</button>
     </div>
+    <div class="cam-controls" id="camControls">
+      <div class="zoom-wrap" id="zoomWrap">
+        <span>🔍</span>
+        <input type="range" id="zoomSlider" min="1" max="5" step="0.1" value="1">
+      </div>
+      <button type="button" class="torch-btn" id="torchBtn" onclick="toggleTorch()">💡 手電筒</button>
+    </div>
+    <small class="scan-tip" id="scanTip">💡 讀不到時：把鏡頭再靠近一點對準左側 QR，或拉動上方 🔍 放大</small>
 
     <div class="result-card" id="resultCard">
       <div class="rc-title" id="rcTitle">✅ 發票識別成功</div>
@@ -457,59 +476,70 @@ function showQRError(msg) {
 }
 
 /* ── Html5QRCode 初始化 ── */
-let html5QrcodeScanner = null;
+let html5Qrcode = null;
+let torchOn = false;
 
-async function initQRCodeScanner() {
-  if (html5QrcodeScanner) return;
-  
-  html5QrcodeScanner = new Html5QrcodeScanner(
-    'reader',
-    {
-      fps: 10,
-      qrbox: { width: 250, height: 250 },
-      aspectRatio: 1.0,
-      disableFlip: false,
+function getQrInstance() {
+  if (!html5Qrcode) {
+    html5Qrcode = new Html5Qrcode('reader', {
       formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-      videoConstraints: {
-        facingMode: { exact: 'environment' },
-        width: { ideal: 1280 },
-        height: { ideal: 1280 }
-      }
-    },
-    false
-  );
+      // 優先使用瀏覽器原生 BarcodeDetector，速度快很多
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+      verbose: false
+    });
+  }
+  return html5Qrcode;
 }
 
 /* ── 相機掃描 ── */
 async function toggleCamera() {
   if (scanning) { stopCamera(); return; }
-  
+
   const btn = document.getElementById('camBtn');
   btn.textContent = '⏳ 啟動中...';
   btn.disabled = true;
-  
+
   try {
-    await initQRCodeScanner();
-    
-    html5QrcodeScanner.render(
-      (decodedText) => {
-        // 掃描成功
-        handleQRResult(decodedText);
+    const qr = getQrInstance();
+
+    const config = {
+      fps: 15,
+      // 動態掃描框：取畫面短邊的 80%，發票 QR 較小時容錯較高
+      qrbox: (vw, vh) => {
+        const m = Math.floor(Math.min(vw, vh) * 0.8);
+        return { width: m, height: m };
       },
-      (error) => {
-        // 掃描失敗，不需特別處理（會持續掃描）
+      aspectRatio: 1.0,
+      disableFlip: false,
+      // 高解析度 + 連續對焦，讓密集的發票 QR 有足夠像素可解
+      videoConstraints: {
+        facingMode: 'environment',
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        focusMode: 'continuous',
+        advanced: [{ focusMode: 'continuous' }]
       }
+    };
+
+    await qr.start(
+      { facingMode: 'environment' },
+      config,
+      (decodedText) => handleQRResult(decodedText),
+      () => {} // 每格掃描失敗會呼叫，持續掃描即可，不處理
     );
-    
+
+    setupCameraControls();
+
     document.getElementById('reader').style.display = 'block';
     document.getElementById('qrPlaceholder').style.display = 'none';
     document.getElementById('scanOverlay').style.display = 'block';
     document.getElementById('qrArea').classList.add('scanning');
+    document.getElementById('scanTip').classList.add('show');
     btn.textContent = '⏹ 停止掃描';
     btn.style.background = '#666';
     btn.disabled = false;
     scanning = true;
-    
+
   } catch (e) {
     console.error('相機啟動失敗:', e);
     btn.textContent = '📷 開啟相機掃描';
@@ -519,25 +549,81 @@ async function toggleCamera() {
   }
 }
 
-function stopCamera() {
-  if (!html5QrcodeScanner) return;
-  
-  try {
-    html5QrcodeScanner.clear();
-  } catch (e) {
-    console.error('停止掃描時出錯:', e);
+/* ── 變焦 / 手電筒：依相機能力顯示控制項 ── */
+function setupCameraControls() {
+  const controls = document.getElementById('camControls');
+  const zoomWrap = document.getElementById('zoomWrap');
+  const torchBtn = document.getElementById('torchBtn');
+  torchOn = false;
+  torchBtn.classList.remove('active');
+  zoomWrap.classList.remove('show');
+  controls.classList.remove('show');
+
+  let caps = {};
+  try { caps = html5Qrcode.getRunningTrackCapabilities() || {}; } catch { caps = {}; }
+
+  let hasControl = false;
+
+  // 變焦
+  if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+    const zs = document.getElementById('zoomSlider');
+    zs.min = caps.zoom.min;
+    zs.max = caps.zoom.max;
+    zs.step = caps.zoom.step || 0.1;
+    // 預設稍微放大，幫助對到小張的發票 QR
+    const startZoom = Math.min(caps.zoom.max, caps.zoom.min + (caps.zoom.max - caps.zoom.min) * 0.35);
+    zs.value = startZoom;
+    applyZoom(startZoom);
+    zs.oninput = () => applyZoom(Number(zs.value));
+    zoomWrap.classList.add('show');
+    hasControl = true;
   }
-  
-  scanning = false;
-  document.getElementById('reader').style.display = 'none';
-  document.getElementById('qrPlaceholder').style.display = 'block';
-  document.getElementById('scanOverlay').style.display = 'none';
-  document.getElementById('qrArea').classList.remove('scanning');
-  
-  const btn = document.getElementById('camBtn');
-  btn.textContent = '📷 開啟相機掃描';
-  btn.style.background = '';
-  btn.disabled = false;
+
+  // 手電筒
+  if (caps.torch) {
+    torchBtn.style.display = '';
+    hasControl = true;
+  } else {
+    torchBtn.style.display = 'none';
+  }
+
+  if (hasControl) controls.classList.add('show');
+}
+
+function applyZoom(z) {
+  if (!html5Qrcode) return;
+  html5Qrcode.applyVideoConstraints({ advanced: [{ zoom: z }] }).catch(() => {});
+}
+
+function toggleTorch() {
+  if (!html5Qrcode) return;
+  torchOn = !torchOn;
+  html5Qrcode.applyVideoConstraints({ advanced: [{ torch: torchOn }] })
+    .then(() => document.getElementById('torchBtn').classList.toggle('active', torchOn))
+    .catch(() => { torchOn = !torchOn; showToast('⚠️ 此裝置不支援手電筒'); });
+}
+
+function stopCamera() {
+  const resetUI = () => {
+    scanning = false;
+    document.getElementById('reader').style.display = 'none';
+    document.getElementById('qrPlaceholder').style.display = 'block';
+    document.getElementById('scanOverlay').style.display = 'none';
+    document.getElementById('qrArea').classList.remove('scanning');
+    document.getElementById('camControls').classList.remove('show');
+    document.getElementById('scanTip').classList.remove('show');
+    const btn = document.getElementById('camBtn');
+    btn.textContent = '📷 開啟相機掃描';
+    btn.style.background = '';
+    btn.disabled = false;
+  };
+
+  if (!html5Qrcode || !scanning) { resetUI(); return; }
+
+  html5Qrcode.stop().then(resetUI).catch(err => {
+    console.error('停止掃描時出錯:', err);
+    resetUI();
+  });
 }
 
 function handleQRResult(raw) {
@@ -559,14 +645,21 @@ async function scanFromFile(input) {
   
   input.value = '';
   showToast('🔍 分析圖片中...');
-  
+
+  if (scanning) stopCamera();
+
+  const fileDecoder = new Html5Qrcode('fileReader', {
+    formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+    verbose: false
+  });
   try {
-    const html5QrcodeDecoder = new Html5Qrcode('reader');
-    const decodedText = await html5QrcodeDecoder.scanFile(file, true);
-    html5QrcodeDecoder.clear();
+    const decodedText = await fileDecoder.scanFile(file, true);
     handleQRResult(decodedText);
   } catch (e) {
     showToast('⚠️ 圖片中無法找到 QR Code，請確認圖片清晰');
+  } finally {
+    try { await fileDecoder.clear(); } catch {}
   }
 }
 
@@ -713,7 +806,7 @@ function renderStats() {
 function fmtDate(d) {
   if (!d) return '';
   const [y, m, day] = d.split('-');
-  return `${y.slice(2)}/${m}/${day}`;
+  return `${y}/${m}/${day}`;
 }
 
 function fmtContent(r) {
