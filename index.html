@@ -33,9 +33,9 @@ input:focus{border-color:#D85A30;background:#fff}
 .btn-secondary:active{transform:scale(0.98)}
 .qr-area{border:1.5px dashed rgba(0,0,0,0.2);border-radius:14px;overflow:hidden;background:#111;position:relative;width:100%;height:0;padding-bottom:100%;display:block}
 .qr-area.scanning{border-color:#D85A30;border-style:solid}
-#reader{display:none}
-#reader canvas{width:100% !important;height:100% !important}
-#reader video{width:100% !important;height:100% !important}
+#reader{display:none;position:absolute;inset:0}
+#reader canvas{width:100% !important;height:100% !important;object-fit:cover}
+#reader video{width:100% !important;height:100% !important;object-fit:cover}
 .qr-placeholder{position:absolute;inset:0;text-align:center;padding:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#aaa}
 .qr-placeholder p{font-size:14px;margin-top:8px}
 .qr-placeholder small{font-size:12px;color:#777;display:block;margin-top:4px}
@@ -129,7 +129,7 @@ input:focus{border-color:#D85A30;background:#fff}
   <div class="card">
     <div class="card-title">📷 掃描發票左側 QR Code</div>
     <div class="qr-area" id="qrArea">
-      <div id="reader" style="width:100%;height:100%;position:relative;"></div>
+      <div id="reader"></div>
       <div class="qr-placeholder" id="qrPlaceholder">
         <div style="font-size:48px">⬛</div>
         <p>點擊下方按鈕開啟相機</p>
@@ -521,6 +521,12 @@ async function toggleCamera() {
       }
     };
 
+    // iOS Safari：先讓容器可見再啟動相機，否則對 display:none 元素啟動會黑畫面
+    document.getElementById('reader').style.display = 'block';
+    document.getElementById('qrPlaceholder').style.display = 'none';
+    document.getElementById('scanOverlay').style.display = 'block';
+    document.getElementById('qrArea').classList.add('scanning');
+
     await qr.start(
       { facingMode: 'environment' },
       config,
@@ -530,10 +536,6 @@ async function toggleCamera() {
 
     setupCameraControls();
 
-    document.getElementById('reader').style.display = 'block';
-    document.getElementById('qrPlaceholder').style.display = 'none';
-    document.getElementById('scanOverlay').style.display = 'block';
-    document.getElementById('qrArea').classList.add('scanning');
     document.getElementById('scanTip').classList.add('show');
     btn.textContent = '⏹ 停止掃描';
     btn.style.background = '#666';
@@ -542,6 +544,11 @@ async function toggleCamera() {
 
   } catch (e) {
     console.error('相機啟動失敗:', e);
+    // 啟動失敗要把畫面還原，避免卡在黑框
+    document.getElementById('reader').style.display = 'none';
+    document.getElementById('qrPlaceholder').style.display = 'block';
+    document.getElementById('scanOverlay').style.display = 'none';
+    document.getElementById('qrArea').classList.remove('scanning');
     btn.textContent = '📷 開啟相機掃描';
     btn.style.background = '';
     btn.disabled = false;
