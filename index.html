@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>發票管家</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:-apple-system,BlinkMacSystemFont,'PingFang TC',sans-serif;background:#f5f5f0;color:#1a1a1a;min-height:100vh;padding-bottom:80px}
@@ -34,8 +34,9 @@ input:focus{border-color:#D85A30;background:#fff}
 .qr-area{border:1.5px dashed rgba(0,0,0,0.2);border-radius:14px;overflow:hidden;background:#111;position:relative;width:100%;height:0;padding-bottom:100%;display:block}
 .qr-area.scanning{border-color:#D85A30;border-style:solid}
 #reader{display:none;position:absolute;inset:0}
-#reader canvas{width:100% !important;height:100% !important;object-fit:cover}
-#reader video{width:100% !important;height:100% !important;object-fit:cover}
+#reader canvas{display:none !important}
+#reader video{width:100% !important;height:100% !important;object-fit:cover;display:block}
+#reader img{display:none !important}
 .qr-placeholder{position:absolute;inset:0;text-align:center;padding:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#aaa}
 .qr-placeholder p{font-size:14px;margin-top:8px}
 .qr-placeholder small{font-size:12px;color:#777;display:block;margin-top:4px}
@@ -534,6 +535,7 @@ async function toggleCamera() {
       () => {} // 每格掃描失敗會呼叫，持續掃描即可，不處理
     );
 
+    nudgeVideoPlay();
     setupCameraControls();
 
     document.getElementById('scanTip').classList.add('show');
@@ -595,6 +597,22 @@ function setupCameraControls() {
   }
 
   if (hasControl) controls.classList.add('show');
+}
+
+// iOS Safari 常見黑畫面：串流有了但 <video> 沒真正播放，這裡強制補屬性並 play
+function nudgeVideoPlay() {
+  const v = document.querySelector('#reader video');
+  if (!v) return;
+  v.setAttribute('playsinline', '');
+  v.setAttribute('webkit-playsinline', '');
+  v.setAttribute('autoplay', '');
+  v.muted = true;
+  const tryPlay = () => v.play().catch(() => {});
+  tryPlay();
+  v.addEventListener('loadedmetadata', tryPlay, { once: true });
+  // 少數情況要延遲再戳一次
+  setTimeout(tryPlay, 300);
+  setTimeout(tryPlay, 800);
 }
 
 function applyZoom(z) {
