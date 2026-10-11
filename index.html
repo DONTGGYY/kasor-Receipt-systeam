@@ -31,11 +31,13 @@ input:focus{border-color:#D85A30;background:#fff}
 .btn-primary:active{transform:scale(0.98);background:#c04f26}
 .btn-secondary{background:#f0f0f0;color:#1a1a1a;border:0.5px solid rgba(0,0,0,0.15)}
 .btn-secondary:active{transform:scale(0.98)}
-.qr-area{border:1.5px dashed rgba(0,0,0,0.2);border-radius:14px;overflow:hidden;background:#111;position:relative;width:100%;height:0;padding-bottom:100%;display:block}
-.qr-area.scanning{border-color:#D85A30;border-style:solid}
-#reader{display:none;position:absolute;inset:0}
+.qr-area{border:1.5px dashed rgba(0,0,0,0.2);border-radius:14px;overflow:hidden;background:#111;position:relative;width:100%;display:block}
+.qr-area:not(.scanning){height:0;padding-bottom:100%}
+.qr-area.scanning{border-color:#D85A30;border-style:solid;min-height:240px}
+#reader{display:none;width:100%}
 #reader canvas{display:none !important}
-#reader video{width:100% !important;height:100% !important;object-fit:cover;display:block}
+/* 不裁切影片：顯示畫面與解碼區域 1:1 對齊，掃描框才不會偏移 */
+#reader video{width:100% !important;height:auto !important;display:block}
 #reader img{display:none !important}
 .qr-placeholder{position:absolute;inset:0;text-align:center;padding:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#aaa}
 .qr-placeholder p{font-size:14px;margin-top:8px}
