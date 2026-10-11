@@ -131,12 +131,12 @@ input:focus{border-color:#D85A30;background:#fff}
 <div id="tab-add" class="section active">
   <div class="card">
     <div class="card-title">📷 掃描發票左側 QR Code</div>
-    <div class="qr-area" id="qrArea">
+    <div class="qr-area" id="qrArea" onclick="refocus()">
       <div id="reader"></div>
       <div class="qr-placeholder" id="qrPlaceholder">
         <div style="font-size:48px">⬛</div>
-        <p>點擊下方按鈕開啟相機</p>
-        <small>請對準發票左方二維條碼</small>
+        <p>掃描發票左側 QR Code</p>
+        <small>發票 QR 又小又密，建議用「📸 拍照辨識」最準</small>
       </div>
       <div class="scan-overlay" id="scanOverlay">
         <div class="scan-line"></div>
@@ -147,9 +147,11 @@ input:focus{border-color:#D85A30;background:#fff}
       </div>
     </div>
     <input type="file" id="fileInput" accept="image/*" onchange="scanFromFile(this)">
+    <input type="file" id="photoInput" accept="image/*" capture="environment" onchange="scanFromFile(this)">
     <div id="fileReader" style="display:none"></div>
+    <button class="btn btn-primary" id="photoBtn" onclick="document.getElementById('photoInput').click()" style="margin-top:10px">📸 拍照辨識（最準，推薦）</button>
     <div class="qr-btns">
-      <button class="btn btn-primary" id="camBtn" onclick="toggleCamera()">📷 開啟相機掃描</button>
+      <button class="btn btn-secondary" id="camBtn" onclick="toggleCamera()">📷 即時掃描</button>
       <button class="btn btn-secondary" onclick="document.getElementById('fileInput').click()">🖼 從相簿選取</button>
     </div>
     <div class="cam-controls" id="camControls">
@@ -159,7 +161,7 @@ input:focus{border-color:#D85A30;background:#fff}
       </div>
       <button type="button" class="torch-btn" id="torchBtn" onclick="toggleTorch()">💡 手電筒</button>
     </div>
-    <small class="scan-tip" id="scanTip">💡 讀不到時：把鏡頭再靠近一點對準左側 QR，或拉動上方 🔍 放大</small>
+    <small class="scan-tip" id="scanTip">💡 對準左側 QR 後，<b>手機拿穩約 2 秒等畫面變清晰</b>（模糊就讀不到）。可拉 🔍 放大、點畫面重新對焦。<br>讀半天讀不到？改用上方「📸 拍照辨識」通常一次就成功。</small>
 
     <div class="result-card" id="resultCard">
       <div class="rc-title" id="rcTitle">✅ 發票識別成功</div>
@@ -506,20 +508,19 @@ async function toggleCamera() {
     const qr = getQrInstance();
 
     const config = {
-      fps: 15,
+      fps: 20, // 更高頻率 → 更多機會抓到「剛好對焦清晰」的那一格
       // 動態掃描框：取畫面短邊的 80%，發票 QR 較小時容錯較高
       qrbox: (vw, vh) => {
         const m = Math.floor(Math.min(vw, vh) * 0.8);
         return { width: m, height: m };
       },
-      aspectRatio: 1.0,
-      disableFlip: false,
-      // 高解析度 + 連續對焦，讓密集的發票 QR 有足夠像素可解
+      // 發票 QR 不會鏡像，關閉翻轉偵測 → 每格解碼更快
+      disableFlip: true,
+      // 高解析度 + 連續對焦：模糊是讀不到的主因，像素越多對模糊越容忍
       videoConstraints: {
         facingMode: 'environment',
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        focusMode: 'continuous',
+        width: { ideal: 2560 },
+        height: { ideal: 1440 },
         advanced: [{ focusMode: 'continuous' }]
       }
     };
@@ -553,11 +554,23 @@ async function toggleCamera() {
     document.getElementById('qrPlaceholder').style.display = 'block';
     document.getElementById('scanOverlay').style.display = 'none';
     document.getElementById('qrArea').classList.remove('scanning');
-    btn.textContent = '📷 開啟相機掃描';
+    btn.textContent = '📷 即時掃描';
     btn.style.background = '';
     btn.disabled = false;
-    showToast('⚠️ 無法開啟相機，請改用「從相簿選取」');
+    showToast('⚠️ 無法開啟相機，請改用「📸 拍照辨識」');
   }
+}
+
+// 點畫面重新對焦（部分裝置支援 single-shot 對焦）
+function refocus() {
+  if (!html5Qrcode || !scanning) return;
+  html5Qrcode.applyVideoConstraints({ advanced: [{ focusMode: 'single-shot' }] })
+    .catch(() => {})
+    .finally(() => {
+      setTimeout(() => {
+        html5Qrcode.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+      }, 600);
+    });
 }
 
 /* ── 變焦 / 手電筒：依相機能力顯示控制項 ── */
@@ -581,8 +594,9 @@ function setupCameraControls() {
     zs.min = caps.zoom.min;
     zs.max = caps.zoom.max;
     zs.step = caps.zoom.step || 0.1;
-    // 預設稍微放大，幫助對到小張的發票 QR
-    const startZoom = Math.min(caps.zoom.max, caps.zoom.min + (caps.zoom.max - caps.zoom.min) * 0.35);
+    // 預設放大到約 2x（幫小張發票 QR 填滿畫面，又不必把手機貼太近而失焦）
+    const target = Math.max(2, caps.zoom.min);
+    const startZoom = Math.min(caps.zoom.max, target <= caps.zoom.max ? target : caps.zoom.min + (caps.zoom.max - caps.zoom.min) * 0.6);
     zs.value = startZoom;
     applyZoom(startZoom);
     zs.oninput = () => applyZoom(Number(zs.value));
@@ -640,7 +654,7 @@ function stopCamera() {
     document.getElementById('camControls').classList.remove('show');
     document.getElementById('scanTip').classList.remove('show');
     const btn = document.getElementById('camBtn');
-    btn.textContent = '📷 開啟相機掃描';
+    btn.textContent = '📷 即時掃描';
     btn.style.background = '';
     btn.disabled = false;
   };
