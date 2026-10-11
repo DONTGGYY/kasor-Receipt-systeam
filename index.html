@@ -135,8 +135,8 @@ input:focus{border-color:#D85A30;background:#fff}
       <div id="reader"></div>
       <div class="qr-placeholder" id="qrPlaceholder">
         <div style="font-size:48px">⬛</div>
-        <p>掃描發票左側 QR Code</p>
-        <small>發票 QR 又小又密，建議用「📸 拍照辨識」最準</small>
+        <p>掃描發票「左側」QR Code</p>
+        <small>發票有左右兩個 QR，要對<b>左邊</b>那個；建議用「📸 拍照辨識」最準</small>
       </div>
       <div class="scan-overlay" id="scanOverlay">
         <div class="scan-line"></div>
@@ -161,7 +161,7 @@ input:focus{border-color:#D85A30;background:#fff}
       </div>
       <button type="button" class="torch-btn" id="torchBtn" onclick="toggleTorch()">💡 手電筒</button>
     </div>
-    <small class="scan-tip" id="scanTip">💡 對準左側 QR 後，<b>手機拿穩約 2 秒等畫面變清晰</b>（模糊就讀不到）。可拉 🔍 放大、點畫面重新對焦。<br>讀半天讀不到？改用上方「📸 拍照辨識」通常一次就成功。</small>
+    <small class="scan-tip" id="scanTip">💡 發票有兩個 QR，請對準<b>左邊</b>那個，<b>拿穩約 2 秒等畫面清晰</b>（模糊就讀不到）。可拉 🔍 放大、點畫面對焦。<br>讀半天讀不到？改用上方「📸 拍照辨識」通常一次就成功。</small>
 
     <div class="result-card" id="resultCard">
       <div class="rc-title" id="rcTitle">✅ 發票識別成功</div>
@@ -295,8 +295,16 @@ function switchTab(tab) {
    QR Code 解析：台灣統一發票格式
    前 77 碼固定欄位，後方以 : 分隔
 ────────────────────────────────── */
+// 判斷是否為發票「左側」主碼（右側明細碼開頭是 **，格式不符就排除）
+function isLeftInvoiceQR(raw) {
+  if (!raw || raw.length < 77) return false;
+  if (raw.startsWith('**')) return false;                 // 右側品名明細碼
+  return /^[A-Z]{2}\d{8}$/.test(raw.slice(0, 10))         // 2英文+8數字 發票號碼
+      && /^\d{7}$/.test(raw.slice(10, 17));               // 民國年月日 7 碼
+}
+
 function parseInvoiceQR(raw) {
-  if (!raw || raw.length < 77) return null;
+  if (!isLeftInvoiceQR(raw)) return null;
 
   const invoiceNo  = raw.slice(0, 10);   // 發票字軌號碼
   const rocDate    = raw.slice(10, 17);  // 民國年月日 7碼
@@ -534,7 +542,7 @@ async function toggleCamera() {
     await qr.start(
       { facingMode: 'environment' },
       config,
-      (decodedText) => handleQRResult(decodedText),
+      (decodedText) => onCameraDecode(decodedText),
       () => {} // 每格掃描失敗會呼叫，持續掃描即可，不處理
     );
 
@@ -667,41 +675,115 @@ function stopCamera() {
   });
 }
 
-function handleQRResult(raw) {
-  stopCamera();
-  const parsed = parseInvoiceQR(raw);
-  if (parsed && parsed.invoiceNo) {
-    fillFields(parsed);
-    showToast('✅ 發票掃描成功！');
-  } else {
-    showQRError('非台灣統一發票 QR Code');
-    showToast('⚠️ 讀到 QR Code 但非發票格式');
-  }
+let lastAimHint = 0;
+function hintAimLeft() {
+  const n = Date.now();
+  if (n - lastAimHint > 2500) { lastAimHint = n; showToast('偵測到右側明細碼，請對準發票「左側」的 QR'); }
 }
 
-/* ── 從圖片掃描 ── */
+// 即時掃描：讀到左側發票碼才停止並帶入；讀到右側明細碼(**)不停，繼續掃並提示
+function onCameraDecode(raw) {
+  const parsed = parseInvoiceQR(raw);
+  if (parsed) {
+    stopCamera();
+    fillFields(parsed);
+    showToast('✅ 發票掃描成功！');
+    return;
+  }
+  if (raw && raw.startsWith('**')) hintAimLeft();
+  // 其他非發票 QR：忽略，持續掃描
+}
+
+/* ── 從圖片掃描（多段式：全圖 → 裁切左半放大，避免誤讀右側明細碼）── */
+async function loadImageForDecode(file) {
+  // 優先用 createImageBitmap 以套用 EXIF 方向（iPhone 照片常帶旋轉資訊）
+  try {
+    if ('createImageBitmap' in window) {
+      return await createImageBitmap(file, { imageOrientation: 'from-image' });
+    }
+  } catch (e) {}
+  return await new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = rej;
+    img.src = url;
+  });
+}
+
+// 取影像區域（leftFrac：只取左側比例，0=全圖）畫到指定寬度的 canvas（可放大）
+function regionToCanvas(img, leftFrac, outW) {
+  const iw = img.width || img.naturalWidth;
+  const ih = img.height || img.naturalHeight;
+  const sw = leftFrac ? Math.round(iw * leftFrac) : iw;
+  const sh = ih;
+  const scale = outW / sw;
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(sw * scale));
+  c.height = Math.max(1, Math.round(sh * scale));
+  const x = c.getContext('2d');
+  x.imageSmoothingEnabled = true;
+  x.imageSmoothingQuality = 'high';
+  x.fillStyle = '#fff';
+  x.fillRect(0, 0, c.width, c.height);
+  x.drawImage(img, 0, 0, sw, sh, 0, 0, c.width, c.height);
+  return c;
+}
+
+function zxingScanCanvas(canvas) {
+  return new Promise(res => {
+    canvas.toBlob(async (blob) => {
+      if (!blob) { res(null); return; }
+      const h = new Html5Qrcode('fileReader', {
+        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+        verbose: false
+      });
+      try { res(await h.scanFile(new File([blob], 'i.png', { type: 'image/png' }), false)); }
+      catch (e) { res(null); }
+      finally { try { await h.clear(); } catch {} }
+    }, 'image/png');
+  });
+}
+
 async function scanFromFile(input) {
   const file = input.files[0];
   if (!file) return;
-  
   input.value = '';
+  if (scanning) stopCamera();
   showToast('🔍 分析圖片中...');
 
-  if (scanning) stopCamera();
+  let img;
+  try { img = await loadImageForDecode(file); }
+  catch (e) { showToast('⚠️ 無法讀取這張圖片'); return; }
 
-  const fileDecoder = new Html5Qrcode('fileReader', {
-    formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-    verbose: false
-  });
+  const iw = img.width || img.naturalWidth;
+  // 依序嘗試：全圖 → 左側 60% 放大 → 其他裁切 → 全圖放大
+  const passes = [
+    [0,    Math.min(1800, iw)],
+    [0.60, 1100],
+    [0.55, 1300],
+    [0.50, 1100],
+    [0.65, 1600],
+    [0,    Math.min(2400, iw * 2)]
+  ];
+
+  let sawRight = false;
   try {
-    const decodedText = await fileDecoder.scanFile(file, true);
-    handleQRResult(decodedText);
-  } catch (e) {
-    showToast('⚠️ 圖片中無法找到 QR Code，請確認圖片清晰');
+    for (const [lf, ow] of passes) {
+      let c;
+      try { c = regionToCanvas(img, lf, ow); } catch (e) { continue; }
+      const t = await zxingScanCanvas(c);
+      if (!t) continue;
+      const parsed = parseInvoiceQR(t);
+      if (parsed) { fillFields(parsed); showToast('✅ 發票辨識成功！'); return; }
+      if (t.startsWith('**')) sawRight = true; // 讀到右側明細碼，繼續試左側裁切
+    }
   } finally {
-    try { await fileDecoder.clear(); } catch {}
+    if (img && img.close) img.close();
   }
+
+  if (sawRight) showToast('⚠️ 只讀到右側明細碼，請改對準發票「左側」那個 QR 再拍一次');
+  else showToast('⚠️ 讀不到 QR，請靠近放大「左側」QR、拿穩拍清楚再試');
 }
 
 /* ── 儲存 ── */
